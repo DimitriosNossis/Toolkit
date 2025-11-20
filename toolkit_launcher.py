@@ -100,16 +100,23 @@ def run_fix_corrupted_tool():
     clear_screen()
     print("Launching System File Repair (DISM + SFC) in a new window...\n")
 
-    exe_path = sys.executable  # this same toolkit exe
-
     # On Windows, CREATE_NEW_CONSOLE = 0x00000010
     CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
 
     try:
-        subprocess.Popen(
-            [exe_path, "--fix-corrupted-child"],
-            creationflags=CREATE_NEW_CONSOLE
-        )
+        if getattr(sys, "frozen", False):
+            # Running as .exe - just pass the exe path
+            subprocess.Popen(
+                [sys.executable, "--fix-corrupted-child"],
+                creationflags=CREATE_NEW_CONSOLE
+            )
+        else:
+            # Running as .py - need to pass python.exe + script path
+            subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__), "--fix-corrupted-child"],
+                creationflags=CREATE_NEW_CONSOLE
+            )
+        
         print("Repair tool launched in a separate window.")
         print("You can keep using the IT Toolkit menu while the scan runs.")
     except Exception as e:
@@ -117,7 +124,6 @@ def run_fix_corrupted_tool():
 
     print("\nReturning to IT Toolkit menu in 3 seconds...")
     time.sleep(3)
-
 
 def open_reliability_history():
     clear_screen()
@@ -212,5 +218,6 @@ if __name__ == "__main__":
     if not is_admin():
         relaunch_as_admin()
         sys.exit(0)
+
 
     main_menu()
