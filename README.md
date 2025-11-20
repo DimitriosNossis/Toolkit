@@ -40,7 +40,7 @@ Direct access to Windows Event Viewer for detailed system log analysis.
 ### Option 1: Download Pre-built Executable (Recommended)
 
 1. Go to the [Releases](../../releases) page
-2. Download the latest `toolkit_launcher.exe`
+2. Download the latest `toolkit_launcher_v0.1.0.exe`
 3. Run the executable - no installation required
 
 ### Option 2: Run from Source
