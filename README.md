@@ -6,7 +6,7 @@ A comprehensive Windows diagnostic and repair toolkit designed for both IT profe
 
 The IT Diagnostic Toolkit is a user-friendly application that simplifies complex system diagnostics and repairs. Whether you're an IT professional servicing multiple machines or a home user troubleshooting your own PC, this toolkit provides essential diagnostic capabilities without requiring technical expertise.
 
-**This is an actively developed project** - more features and improvements are being added regularly based on user feedback and testing.
+**This is an actively developed project** - more features and improvements will be added based on user feedback and testing.
 
 ## Features
 
