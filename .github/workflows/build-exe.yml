@@ -1,0 +1,72 @@
+# Builds the IT Toolkit .exe on a Windows machine at GitHub.
+#
+# - Every push to main and every pull request: builds the .exe and attaches
+#   it to the run (Actions tab -> the run -> "Artifacts" at the bottom).
+# - Pushing a version tag such as v0.2.0: also publishes a GitHub Release
+#   with the .exe attached.
+# - "Run workflow" button on the Actions tab: build on demand.
+
+name: Build .exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create Releases for version tags
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Check the modules import
+        run: python -c "import toolkit_launcher, toolkit_gui, hardware_scan, fix_corrupted"
+
+      - name: Pick the file name
+        id: name
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "exe=toolkit_launcher_${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "exe=toolkit_launcher_${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the .exe
+        run: >
+          pyinstaller --onefile --windowed --uac-admin
+          --name ${{ steps.name.outputs.exe }}
+          --icon assets/cat.ico
+          --add-data "assets;assets"
+          toolkit_launcher.py
+
+      - name: Upload the .exe to this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.exe }}
+          path: dist/${{ steps.name.outputs.exe }}.exe
+
+      - name: Publish a Release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.name.outputs.exe }}.exe
+          generate_release_notes: true

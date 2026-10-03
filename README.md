@@ -79,6 +79,18 @@ To create your own executable:
 
 3. The executable will be created in the `dist/` folder
 
+### Automatic builds (GitHub Actions)
+
+The workflow in `.github/workflows/build-exe.yml` builds the executable on GitHub's Windows machines:
+
+- **Every push to `main` and every pull request**: open the **Actions** tab, click the run, and download the `.exe` from **Artifacts** at the bottom of the page.
+- **Version tags** (for example `v0.2.0`): the `.exe` is also published as a GitHub **Release**:
+```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+```
+- **On demand**: Actions tab → **Build .exe** → **Run workflow**.
+
 ## Usage
 
 1. **Launch the application** - Run as Administrator (the toolkit will prompt for elevation if needed)
