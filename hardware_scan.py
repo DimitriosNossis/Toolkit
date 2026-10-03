@@ -7,6 +7,9 @@ import subprocess
 import sys
 import psutil  # make sure this is installed
 
+# Keep PowerShell helpers from flashing console windows when run from the GUI
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def get_ip_address():
     try:
@@ -27,6 +30,7 @@ def get_cpu_model():
                 "Select-Object -ExpandProperty Name",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         return result.strip()
@@ -44,6 +48,7 @@ def get_windows_edition():
                 "(Get-CimInstance Win32_OperatingSystem).Caption",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         return result.strip()
@@ -71,6 +76,7 @@ def get_secure_boot_status():
                 "Confirm-SecureBootUEFI",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         # PowerShell returns "True" or "False"
@@ -93,6 +99,7 @@ def get_bios_info():
                 "Format-List",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         return result.strip()
@@ -110,6 +117,7 @@ def get_gpu_models():
                 "Select-Object -ExpandProperty Name",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         gpus = [line.strip() for line in result.splitlines() if line.strip()]
@@ -133,6 +141,7 @@ def get_physical_disk_to_partition_mapping():
                 "Get-Partition | Select-Object DiskNumber, DriveLetter | ConvertTo-Json",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         
@@ -175,6 +184,7 @@ def get_disk_health():
                 "Get-PhysicalDisk | Select-Object DeviceID, FriendlyName, OperationalStatus, HealthStatus | ConvertTo-Json",
             ],
             stderr=subprocess.DEVNULL,
+            creationflags=NO_WINDOW,
             text=True,
         )
         
@@ -312,10 +322,11 @@ def main():
 
     print("Hardware scan completed.")
     print(f"Report saved to: {report_path}")
+    return report_path
 
 
 def run_hardware_scan():
-    main()  # just call your existing main()
+    return main()  # just call your existing main()
 
 
 if __name__ == "__main__":

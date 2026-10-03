@@ -65,6 +65,11 @@ def relaunch_as_admin():
     else:
         exe_path = sys.executable  # python.exe
         script_path = os.path.abspath(__file__)
+        if wants_gui():
+            # pythonw.exe runs the window without an extra black console
+            pythonw = os.path.join(os.path.dirname(exe_path), "pythonw.exe")
+            if os.path.exists(pythonw):
+                exe_path = pythonw
 
     extra_args = " ".join(f'"{arg}"' for arg in sys.argv[1:])
 
@@ -81,6 +86,70 @@ def relaunch_as_admin():
         None,
         1         # normal window
     )
+
+
+# ========= Launch helpers =========
+
+def wants_gui():
+    """True unless a console mode was asked for on the command line."""
+    args = sys.argv[1:]
+    return not any(a in args for a in ("--console", "--fix-corrupted-child"))
+
+
+def hide_own_console():
+    """
+    Hide the console window if this process opened it just for itself
+    (e.g. a double-clicked .py). A cmd window you started from is left alone.
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+        hwnd = kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        pids = (ctypes.c_uint * 4)()
+        if kernel32.GetConsoleProcessList(pids, 4) <= 1:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+def child_command(flag):
+    """Command line that re-runs this toolkit (exe or .py) in a child mode."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, flag]
+    return [sys.executable, os.path.abspath(__file__), flag]
+
+
+def launch_fix_corrupted_window():
+    """Start DISM + SFC in its own console window. Raises on failure."""
+    # On Windows, CREATE_NEW_CONSOLE = 0x00000010
+    CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+    subprocess.Popen(child_command("--fix-corrupted-child"), creationflags=CREATE_NEW_CONSOLE)
+
+
+def shell_open(target, params=None):
+    """Open a Windows tool (e.g. perfmon.exe, eventvwr.msc). Raises on failure."""
+    result = ctypes.windll.shell32.ShellExecuteW(None, "open", target, params, None, 1)
+    if result <= 32:
+        raise OSError(f"ShellExecute error {result}")
+
+
+def attach_console_streams():
+    """
+    A windowed (--noconsole) build starts without stdio. Child modes that get
+    their own console reconnect to it so print() and input() work.
+    """
+    if sys.stdout is None or sys.stdin is None:
+        try:
+            ctypes.windll.kernel32.AllocConsole()  # no-op if we already have one
+        except Exception:
+            pass
+        try:
+            sys.stdout = open("CONOUT$", "w", buffering=1)
+            sys.stderr = sys.stdout
+            sys.stdin = open("CONIN$", "r")
+        except OSError:
+            pass
 
 
 # ========= Menu actions =========
@@ -100,23 +169,8 @@ def run_fix_corrupted_tool():
     clear_screen()
     print("Launching System File Repair (DISM + SFC) in a new window...\n")
 
-    # On Windows, CREATE_NEW_CONSOLE = 0x00000010
-    CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
-
     try:
-        if getattr(sys, "frozen", False):
-            # Running as .exe - just pass the exe path
-            subprocess.Popen(
-                [sys.executable, "--fix-corrupted-child"],
-                creationflags=CREATE_NEW_CONSOLE
-            )
-        else:
-            # Running as .py - need to pass python.exe + script path
-            subprocess.Popen(
-                [sys.executable, os.path.abspath(__file__), "--fix-corrupted-child"],
-                creationflags=CREATE_NEW_CONSOLE
-            )
-        
+        launch_fix_corrupted_window()
         print("Repair tool launched in a separate window.")
         print("You can keep using the IT Toolkit menu while the scan runs.")
     except Exception as e:
@@ -129,14 +183,7 @@ def open_reliability_history():
     clear_screen()
     print("Opening Reliability Monitor...\n")
     try:
-        ctypes.windll.shell32.ShellExecuteW(
-            None,
-            "open",
-            "perfmon.exe",
-            "/rel",
-            None,
-            1
-        )
+        shell_open("perfmon.exe", "/rel")
     except Exception as e:
         print(f"[!] Failed to open Reliability Monitor: {e}")
     print("\nReturning to IT Toolkit menu in 3 seconds...")
@@ -147,14 +194,7 @@ def open_event_viewer():
     clear_screen()
     print("Opening Event Viewer...\n")
     try:
-        ctypes.windll.shell32.ShellExecuteW(
-            None,
-            "open",
-            "eventvwr.msc",
-            None,
-            None,
-            1
-        )
+        shell_open("eventvwr.msc")
     except Exception as e:
         print(f"[!] Failed to open Event Viewer: {e}")
     print("\nReturning to IT Toolkit menu in 3 seconds...")
@@ -194,11 +234,25 @@ def main_menu():
 
 # ========= Entry point =========
 
+def start_gui():
+    """Open the graphical toolkit; fall back to the console menu if it can't start."""
+    try:
+        import toolkit_gui
+    except ImportError as e:
+        attach_console_streams()
+        print(f"Graphical mode unavailable ({e}). Using the console menu.")
+        time.sleep(2)
+        main_menu()
+        return
+    toolkit_gui.run()
+
+
 if __name__ == "__main__":
     disable_quick_edit()
 
     # Child mode: only run DISM+SFC in this window, no menu
     if "--fix-corrupted-child" in sys.argv[1:]:
+        attach_console_streams()
         # Make sure we are admin; if not, relaunch with same arg.
         if not is_admin():
             relaunch_as_admin()
@@ -219,5 +273,9 @@ if __name__ == "__main__":
         relaunch_as_admin()
         sys.exit(0)
 
-
-    main_menu()
+    if "--console" in sys.argv[1:]:
+        attach_console_streams()
+        main_menu()
+    else:
+        hide_own_console()
+        start_gui()

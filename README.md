@@ -72,9 +72,9 @@ To create your own executable:
    pip install pyinstaller
 ```
 
-2. Build the executable:
+2. Build the executable (bundling the cat artwork and fonts):
 ```bash
-   pyinstaller --onefile toolkit_launcher.py
+   pyinstaller --onefile --windowed --add-data "assets;assets" toolkit_launcher.py
 ```
 
 3. The executable will be created in the `dist/` folder
@@ -83,12 +83,23 @@ To create your own executable:
 
 1. **Launch the application** - Run as Administrator (the toolkit will prompt for elevation if needed)
 
-2. **Select an option** from the main menu:
+2. **Select an option** - click a card in the toolkit window, or press its number:
    - Press `1` for Hardware Scan
    - Press `2` for System File Repair
    - Press `3` to open Reliability History
    - Press `4` to open Event Viewer
    - Press `0` to Exit
+
+   A cat naps on top of the window. When you pick a tool it wakes up, bats a couple of the other cards out of line, and taps yours. Hardware Scan and System File Repair run inside the window, with a progress bar, live output and the finished report on screen; reports are still saved to `reports/`. A little after a tool finishes, the cat drifts back to sleep.
+
+   Click the cat to pet it: it closes its eyes, leans into your hand and little hearts float up.
+
+   The window has its own title bar: drag it (or the cat) to move the window, and use the buttons on the right to minimise or close it.
+
+   Prefer the classic text menu? Start the toolkit with `--console`:
+```bash
+   python toolkit_launcher.py --console
+```
 
 3. **View reports** - All diagnostic reports are saved in the `reports/` folder next to the executable:
    - `hardware_scan_report.txt` - Complete hardware inventory
@@ -117,7 +128,7 @@ This toolkit is designed to be accessible for users without technical background
 
 - **Detailed logging**: Comprehensive reports for documentation and compliance
 - **No user interaction required**: Hardware scan runs silently with report generation
-- **Separate repair window**: System File Repair runs in its own console, allowing continued toolkit usage
+- **In-app repair**: System File Repair (DISM + SFC) runs inside the toolkit window with live progress (in `--console` mode it still opens its own console window)
 - **SMART health monitoring**: Physical disk health status for proactive maintenance
 
 ## Technical Details
@@ -126,7 +137,9 @@ This toolkit is designed to be accessible for users without technical background
 
 The toolkit consists of three main modules:
 
-- `toolkit_launcher.py`: Main menu interface and application orchestration
+- `toolkit_launcher.py`: Entry point, admin elevation, console menu and application orchestration
+- `toolkit_gui.py`: Graphical menu window (Tkinter) with the sleeping cat
+- `assets/`: Cat artwork and the bundled Zen Maru Gothic / JetBrains Mono fonts (SIL Open Font License, see `assets/fonts/`)
 - `hardware_scan.py`: System information gathering
 - `fix_corrupted.py`: DISM and SFC automation with progress tracking
 
@@ -134,6 +147,7 @@ The toolkit consists of three main modules:
 
 - **psutil**: Cross-platform system and process utilities
 - **tqdm**: Progress bar library for visual feedback
+- **Pillow**: Image handling for the graphical menu (cat animation)
 
 ### Compatibility
 
