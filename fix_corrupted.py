@@ -5,6 +5,27 @@ import datetime
 import ctypes
 from tqdm import tqdm
 
+# Keep DISM/SFC from opening their own console windows when run from the GUI
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# The command currently running, so the GUI can stop it if the app is closed
+current_process = None
+
+
+class _CallbackBar:
+    """Stands in for a tqdm bar and reports progress to a callback instead."""
+
+    def __init__(self, on_progress):
+        self.on_progress = on_progress
+        self.n = 0
+        self.on_progress(0)
+
+    def refresh(self):
+        self.on_progress(self.n)
+
+    def close(self):
+        pass
+
 
 def is_admin():
     """Check if the script is running with Administrator privileges."""
@@ -41,11 +62,27 @@ def get_base_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 
-def run_command(cmd):
+def run_command(cmd, on_progress=None, on_message=None):
     """
     Run a command and stream its output live to the console with tqdm progress bars.
+
+    When on_message is given (the GUI), messages go to on_message(text) and
+    progress goes to on_progress(percent) instead of the console.
     """
-    print(f"\n=== Running: {cmd} ===\n")
+    global current_process
+    gui = on_message is not None
+    emit = on_message if gui else print
+    emit(f"\n=== Running: {cmd} ===\n")
+
+    def make_bar(desc):
+        if gui:
+            return _CallbackBar(on_progress or (lambda n: None))
+        return tqdm(
+            total=100,
+            desc=desc,
+            unit="%",
+            bar_format='{desc}: {percentage:3.0f}%|{bar}|'
+        )
 
     cmd_lower = cmd.lower()
     is_sfc = "sfc" in cmd_lower and "/scannow" in cmd_lower
@@ -62,7 +99,9 @@ def run_command(cmd):
         text=True,
         encoding=encoding,
         errors="ignore",
+        creationflags=NO_WINDOW,
     )
+    current_process = process
 
     raw_output_lines = []
     pbar = None
@@ -70,19 +109,9 @@ def run_command(cmd):
 
     # Create progress bar with Unicode block characters (smooth bar)
     if is_sfc:
-        pbar = tqdm(
-            total=100,
-            desc="SFC Verification",
-            unit="%",
-            bar_format='{desc}: {percentage:3.0f}%|{bar}|'
-        )
+        pbar = make_bar("SFC Verification")
     elif is_dism and any(x in cmd_lower for x in ["scanhealth", "restorehealth"]):
-        pbar = tqdm(
-            total=100,
-            desc="DISM Progress",
-            unit="%",
-            bar_format='{desc}: {percentage:3.0f}%|{bar}|'
-        )
+        pbar = make_bar("DISM Progress")
 
     # Stream output
     while True:
@@ -126,7 +155,7 @@ def run_command(cmd):
                 if pbar:
                     pbar.close()
                     pbar = None
-                print(f"\n{stripped}\n")
+                emit(f"\n{stripped}\n")
         
         # DISM handling
         elif is_dism:
@@ -149,6 +178,8 @@ def run_command(cmd):
             # Non-progress DISM output
             if pbar and "operation completed successfully" in lower_stripped:
                 pbar.n = 100
+                if gui:
+                    pbar.refresh()
                 pbar.close()
                 pbar = None
             
@@ -161,20 +192,24 @@ def run_command(cmd):
                 "operation completed",
                 "restore operation"
             ]):
-                if pbar:
+                if pbar and not gui:
                     # Temporarily clear progress bar to show message
                     tqdm.write(stripped)
                 else:
-                    print(stripped)
+                    emit(stripped)
         else:
             # Other commands - just print normally
-            print(line, end="")
+            if gui:
+                emit(line.rstrip())
+            else:
+                print(line, end="")
         
         raw_output_lines.append(line)
 
     # Close progress bar if still open
     if pbar:
         pbar.close()
+    current_process = None
 
     # Combine & clean raw output for the report
     result = "".join(raw_output_lines)
@@ -216,11 +251,17 @@ def run_command(cmd):
     return "\n".join(cleaned_lines) + "\n" if cleaned_lines else ""
 
 
-def run_fix_corrupted():
+def run_fix_corrupted(on_step=None, on_progress=None, on_message=None):
     """
     Main logic to run DISM + SFC and write a report.
     Assumes we are already running as Administrator.
+
+    The GUI passes callbacks: on_step(index, total, cmd) before each command,
+    plus on_progress/on_message (see run_command). Without them it runs in the
+    console and asks for Enter before starting. Returns the report path.
     """
+    gui = on_message is not None
+    emit = on_message if gui else print
     base_dir = get_base_dir()
     reports_dir = os.path.join(base_dir, "reports")
     os.makedirs(reports_dir, exist_ok=True)
@@ -237,12 +278,13 @@ def run_fix_corrupted():
     lines.append("4) sfc /scannow")
     lines.append("")
 
-    print("System File Repair Tool")
-    print("-----------------------")
-    print("This will run DISM (CheckHealth, ScanHealth, RestoreHealth) and SFC /scannow.")
-    print("Depending on system speed, this can take quite a while.\n")
+    if not gui:
+        print("System File Repair Tool")
+        print("-----------------------")
+        print("This will run DISM (CheckHealth, ScanHealth, RestoreHealth) and SFC /scannow.")
+        print("Depending on system speed, this can take quite a while.\n")
 
-    input("Press Enter to start the repair process, or close this window to cancel...")
+        input("Press Enter to start the repair process, or close this window to cancel...")
 
     commands = [
         "Dism /Online /Cleanup-Image /CheckHealth",
@@ -251,9 +293,11 @@ def run_fix_corrupted():
         "sfc /scannow",
     ]
 
-    for cmd in commands:
+    for i, cmd in enumerate(commands):
+        if on_step:
+            on_step(i, len(commands), cmd)
         lines.append(f"=== Running: {cmd} ===")
-        output = run_command(cmd)
+        output = run_command(cmd, on_progress, on_message)
         lines.append(output)
         lines.append("")
 
@@ -262,10 +306,11 @@ def run_fix_corrupted():
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
-    print("\n" + "="*50)
-    print("ALL HEALTH CHECKS FINISHED!")
-    print("="*50)
-    print(f"Full report saved to: {report_path}")
+    emit("\n" + "="*50)
+    emit("ALL HEALTH CHECKS FINISHED!")
+    emit("="*50)
+    emit(f"Full report saved to: {report_path}")
+    return report_path
 
 
 if __name__ == "__main__":
