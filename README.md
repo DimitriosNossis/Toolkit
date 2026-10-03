@@ -42,7 +42,7 @@ Direct access to Windows Event Viewer for detailed system log analysis.
 ### Option 1: Download Pre-built Executable (Recommended)
 
 1. Go to the [Releases](../../releases) page
-2. Download the latest `toolkit_launcher_v0.2.0.exe`
+2. Download the latest `toolkit_launcher_v0.2.1.exe`
 3. Run the executable - no installation required
 
 ### Option 2: Run from Source
@@ -202,7 +202,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This toolkit uses Windows built-in diagnostic and repair utilities. While these tools are safe and widely used, always ensure you have backups before performing system repairs. 
 
-**This is an early release (v0.2.0) and further testing is ongoing.** While the toolkit has been tested on various Windows 10 and 11 systems, users should exercise caution and report any issues encountered.
+**This is an early release (v0.2.1) and further testing is ongoing.** While the toolkit has been tested on various Windows 10 and 11 systems, users should exercise caution and report any issues encountered.
 
 The authors are not responsible for any system changes or data loss resulting from the use of this toolkit.
 
@@ -212,5 +212,5 @@ For issues, questions, or suggestions, please open an issue on the GitHub reposi
 
 ---
 
-**Version**: 0.2.0  
+**Version**: 0.2.1  
 **Last Updated**: October 2026

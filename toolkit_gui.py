@@ -27,7 +27,7 @@ import hardware_scan
 import toolkit_launcher as launcher
 
 
-VERSION = "v0.2.0"
+VERSION = "v0.2.1"
 MISCHIEF = 2  # how many other cards the cat bats out of line (0-3)
 WINDOWS = os.name == "nt"
 
@@ -386,10 +386,6 @@ class CatArt:
             self.cache.popitem(last=False)
         return photo
 
-    def icon(self):
-        face = self.awake.crop((40, 0, 220, 180)).resize((64, 64), Image.LANCZOS)
-        return ImageTk.PhotoImage(face)
-
 
 # ========= The app =========
 
@@ -407,8 +403,7 @@ class ToolkitApp:
         self.bg_photo = ImageTk.PhotoImage(bg)
         self.cv.create_image(0, 0, image=self.bg_photo, anchor="nw")
         self.cat = CatArt(bg)
-        self.icon = self.cat.icon()
-        root.iconphoto(True, self.icon)
+        self.set_icon()
 
         # state (mirrors the design's component state)
         self.awake = False
@@ -458,6 +453,20 @@ class ToolkitApp:
         self.breathe()
         self.schedule_blink()
         self.tick()
+
+    def set_icon(self):
+        """Window and taskbar icon: the same assets/cat.ico the .exe uses."""
+        path = resource_path("assets", "cat.ico")
+        try:
+            if WINDOWS:
+                self.root.iconbitmap(default=path)
+            else:
+                ico = Image.open(path)
+                ico.size = max(ico.info.get("sizes", {ico.size}))
+                self.icon = ImageTk.PhotoImage(ico.convert("RGBA").resize((64, 64), Image.LANCZOS))
+                self.root.iconphoto(True, self.icon)
+        except Exception:
+            pass   # keep the default icon rather than fail to start
 
     # ----- fonts -----
 
