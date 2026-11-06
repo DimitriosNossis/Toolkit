@@ -7,6 +7,7 @@ on top of it with its paws over the edge. Pick a tool (click a card or press
 yours, runs the tool inside the window, and drifts back to sleep a little later.
 """
 
+import json
 import math
 import os
 import queue
@@ -27,7 +28,7 @@ import hardware_scan
 import toolkit_launcher as launcher
 
 
-VERSION = "v0.2.1"
+VERSION = "v0.2.2"
 MISCHIEF = 2  # how many other cards the cat bats out of line (0-3)
 WINDOWS = os.name == "nt"
 
@@ -227,6 +228,37 @@ def short_path(path):
         return str(path)
 
 
+# ========= Settings =========
+
+DEFAULT_SETTINGS = {"menu_animations": True}
+
+
+def settings_path():
+    """Per-user settings file, e.g. %APPDATA%\\IT Toolkit\\settings.json on Windows."""
+    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "IT Toolkit", "settings.json")
+
+
+def load_settings():
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            saved = json.load(f)
+        settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
+    except (OSError, ValueError, AttributeError):
+        pass
+    return settings
+
+
+def save_settings(settings):
+    try:
+        os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
+        with open(settings_path(), "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except OSError:
+        pass   # not being able to remember a preference shouldn't stop the app
+
+
 # ========= Windows window helpers =========
 
 def _hwnd(root):
@@ -297,6 +329,26 @@ def paint_background():
     ImageDraw.Draw(outside).rounded_rectangle([px0, py0, px1 - 1, py1 - 1], radius=16, fill=0)
     img.paste(hex_rgb(KEY), (0, 0), outside)
     return img
+
+
+def cog_icon(size, color, teeth=8):
+    """A settings cog: solid ring, square teeth and a centre hole, drawn large
+    and scaled down so the edges stay smooth at title-bar size."""
+    ss = 8
+    n = size * ss
+    c = n / 2
+    r_body, r_tooth, r_hole, half_w = .36 * n, .47 * n, .15 * n, .105 * n
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    ink = tuple(color) + (255,)
+    d.ellipse([c - r_body, c - r_body, c + r_body, c + r_body], fill=ink)
+    for i in range(teeth):
+        a = 2 * math.pi * i / teeth
+        ca, sa = math.cos(a), math.sin(a)
+        corners = ((r_body * .8, -half_w), (r_tooth, -half_w * .82), (r_tooth, half_w * .82), (r_body * .8, half_w))
+        d.polygon([(c + al * ca - ac * sa, c + al * sa + ac * ca) for al, ac in corners], fill=ink)
+    d.ellipse([c - r_hole, c - r_hole, c + r_hole, c + r_hole], fill=(0, 0, 0, 0))
+    return im.resize((size, size), Image.LANCZOS)
 
 
 def crop_padded(img, x, y, w, h, fill):
@@ -418,6 +470,8 @@ class ToolkitApp:
         self.view = "menu"
         self.task = None        # {"k", "state": confirm|running|done|failed, ...}
         self.drag = None
+        self.settings = load_settings()
+        self.settings_open = False
 
         self.layout_body()
         self.draw_body()
@@ -839,16 +893,22 @@ class ToolkitApp:
 
         # window controls: minimise, maximise (fixed-size window, so dimmed), close
         right = PANEL_X + PANEL_W - BORDER - 8
-        self.ctrl_left = right - 3 * CTRL_W - 2 * CTRL_GAP
+        self.ctrl_left = right - 4 * CTRL_W - 3 * CTRL_GAP
         cv.create_text(self.ctrl_left - 10, cy, anchor="e", text=VERSION, fill=INK_SOFT, font=mono11)
         glyph = INK_SOFT
-        for i, name in enumerate(("min", "max", "close")):
+        for i, name in enumerate(("gear", "min", "max", "close")):
             x0 = self.ctrl_left + i * (CTRL_W + CTRL_GAP)
             x1, y0, y1 = x0 + CTRL_W, cy - CTRL_H / 2, cy + CTRL_H / 2
             tag = f"ctrl_{name}"
             bg = cv.create_polygon(flat(rounded_points(x0, y0, x1, y1, 6, 6, 6, 6)), fill=BAR, outline="", tags=tag)
             mx, my = (x0 + x1) / 2, cy
-            if name == "min":
+            if name == "gear":
+                self.gear_rect = (x0, y0, x1, y1)
+                self.gear_bg = bg
+                self.gear_icons = {ink: ImageTk.PhotoImage(cog_icon(18, hex_rgb(ink))) for ink in (glyph, INK)}
+                self.gear_item = cv.create_image(mx, my, image=self.gear_icons[glyph], tags=tag)
+                marks = []
+            elif name == "min":
                 marks = [cv.create_line(mx - 5, my, mx + 5, my, fill=glyph, width=1.2, tags=tag)]
             elif name == "max":
                 marks = [cv.create_rectangle(mx - 5, my - 5, mx + 5, my + 5, outline=mix(BAR, glyph, .35),
@@ -860,23 +920,94 @@ class ToolkitApp:
                 continue
             hover_bg, hover_ink = (CLOSE_HOVER, "#ffffff") if name == "close" else (BAR_HOVER, INK)
 
-            def enter(e, bg=bg, marks=marks, hb=hover_bg, hi=hover_ink):
+            def enter(e, bg=bg, marks=marks, hb=hover_bg, hi=hover_ink, name=name):
                 cv.itemconfig(bg, fill=hb)
+                if name == "gear":
+                    cv.itemconfig(self.gear_item, image=self.gear_icons[hi])
                 for m in marks:
                     cv.itemconfig(m, fill=hi)
+                cv.config(cursor="hand2")
 
-            def leave(e, bg=bg, marks=marks):
-                cv.itemconfig(bg, fill=BAR)
+            def leave(e, bg=bg, marks=marks, name=name):
+                rest = BAR_HOVER if name == "gear" and self.settings_open else BAR
+                cv.itemconfig(bg, fill=rest)
+                if name == "gear":
+                    cv.itemconfig(self.gear_item, image=self.gear_icons[glyph])
                 for m in marks:
                     cv.itemconfig(m, fill=glyph)
+                cv.config(cursor="")
             cv.tag_bind(tag, "<Enter>", enter)
             cv.tag_bind(tag, "<Leave>", leave)
+        cv.tag_bind("ctrl_gear", "<ButtonRelease-1>", lambda e: self.toggle_settings())
         cv.tag_bind("ctrl_min", "<ButtonRelease-1>", lambda e: minimize(self.root))
         cv.tag_bind("ctrl_close", "<ButtonRelease-1>", lambda e: self.close())
+        self.draw_settings()
+
+    # ----- settings card (opened from the gear) -----
+
+    def draw_settings(self):
+        cv = self.cv
+        gx0, gy0, gx1, gy1 = self.gear_rect
+        w, h = 310, 78
+        x1 = min(gx1 + 6, PANEL_X + PANEL_W - BORDER - 8)
+        x0, y0 = x1 - w, gy1 + 10
+        y1 = y0 + h
+        self.settings_rect = (x0, y0, x1, y1)
+        tags = ("settings",)
+        row = tags + ("settings_row",)
+        for grow, off, alpha in ((6, 6, .05), (3, 4, .07), (0, 2, .10)):
+            cv.create_polygon(flat(rounded_points(x0 - grow, y0 - grow + off, x1 + grow, y1 + grow + off,
+                                                  12 + grow, 12 + grow, 12 + grow, 12 + grow)),
+                              fill=mix(PAPER, (40, 30, 20), alpha), outline="", tags=tags)
+        cv.create_polygon(flat(rounded_points(x0, y0, x1, y1, 12, 12, 12, 12)),
+                          fill=CARD, outline=EDGE, width=1, tags=row)
+        cv.create_text(x0 + 16, y0 + 27, anchor="w", text="Menu animations", fill=INK,
+                       font=self.bold(14), tags=row)
+        cv.create_text(x0 + 16, y0 + 52, anchor="w", text="The cat bats the cards when you pick a tool",
+                       fill=DESC, font=self.font(self.ui, 12), tags=row)
+        sx1, sy = x1 - 16, y0 + 27
+        self.switch_rect = (sx1 - 38, sy - 11, sx1, sy + 11)
+        self.switch_track = cv.create_polygon(0, 0, 0, 0, 0, 0, outline="", tags=row)
+        self.switch_knob = cv.create_oval(0, 0, 0, 0, fill="#ffffff", outline=mix(LINE, INK, .15), tags=row)
+        self.knob = Tween(1.0 if self.settings["menu_animations"] else 0.0)
+        cv.tag_bind("settings_row", "<ButtonRelease-1>", lambda e: self.toggle_menu_animations())
+        cv.tag_bind("settings_row", "<Enter>", lambda e: cv.config(cursor="hand2"))
+        cv.tag_bind("settings_row", "<Leave>", lambda e: cv.config(cursor=""))
+        self.place_switch()
+        cv.itemconfig("settings", state="hidden")
+
+    def place_switch(self, t=None):
+        x0, y0, x1, y1 = self.switch_rect
+        p = self.knob.get(t)
+        r = (y1 - y0) / 2
+        self.cv.coords(self.switch_track, flat(rounded_points(x0, y0, x1, y1, r, r, r, r)))
+        self.cv.itemconfig(self.switch_track, fill=mix(LINE, ACCENT, p))
+        kx = x0 + r + (x1 - x0 - 2 * r) * p
+        self.cv.coords(self.switch_knob, kx - r + 3, y0 + 3, kx + r - 3, y1 - 3)
+
+    def toggle_settings(self, show=None):
+        show = (not self.settings_open) if show is None else show
+        self.settings_open = show
+        self.cv.itemconfig("settings", state="normal" if show else "hidden")
+        if show:
+            self.cv.tag_raise("settings")
+        self.cv.itemconfig(self.gear_bg, fill=BAR_HOVER if show else BAR)
+
+    def toggle_menu_animations(self):
+        on = not self.settings["menu_animations"]
+        self.settings["menu_animations"] = on
+        save_settings(self.settings)
+        self.knob.set(1.0 if on else 0.0, 180, EASE)
+        self.push_log(f"Menu animations {'on' if on else 'off'}.")
 
     # ----- moving the frameless window -----
 
     def drag_start(self, e):
+        if self.settings_open:
+            inside = any(x0 <= e.x <= x1 and y0 <= e.y <= y1
+                         for x0, y0, x1, y1 in (self.settings_rect, self.gear_rect))
+            if not inside:
+                self.toggle_settings(False)
         on_controls = e.x >= self.ctrl_left - 4 and PANEL_Y <= e.y <= BY
         if e.y < BY and not on_controls:
             self.drag = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
@@ -912,6 +1043,9 @@ class ToolkitApp:
         if any(tw.moving(t) for tw in (self.paw_x, self.paw_y, self.paw_r)) or getattr(self, "paw_dirty", False):
             self.paw_dirty = any(tw.moving(t) for tw in (self.paw_x, self.paw_y, self.paw_r))
             self.place_paw(t=t)
+        if self.knob.moving(t) or getattr(self, "knob_dirty", False):
+            self.knob_dirty = self.knob.moving(t)
+            self.place_switch(t)
         if self.view == "task" and self.prog_value is None:
             self.draw_progress(t)
         self.draw_cat(t)
@@ -1087,6 +1221,9 @@ class ToolkitApp:
         self.render_log()
 
     def on_key(self, e):
+        if self.settings_open and e.keysym == "Escape":
+            self.toggle_settings(False)
+            return
         if self.view == "task":
             state = self.task["state"] if self.task else None
             if e.keysym == "Return" and state == "confirm":
@@ -1115,6 +1252,19 @@ class ToolkitApp:
             self.sleep_timer = None
         self.busy = True
         self.set_awake(True)
+
+        if not self.settings["menu_animations"]:
+            # no paw, no swats: the cat just glances at your pick and the tool starts
+            self.stare = True
+            self.update_cat()
+            self.set_pressed(k)
+
+            def go():
+                self.stare = False
+                self.update_cat()
+                self.run_tool(k)
+            self.at(250, go)
+            return
 
         t = 700
         others = [i for i in range(len(self.cards)) if i != ci]

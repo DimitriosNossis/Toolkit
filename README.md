@@ -42,7 +42,7 @@ Direct access to Windows Event Viewer for detailed system log analysis.
 ### Option 1: Download Pre-built Executable (Recommended)
 
 1. Go to the [Releases](../../releases) page
-2. Download the latest `toolkit_launcher_v0.2.1.exe`
+2. Download the latest `toolkit_launcher_v0.2.2.exe`
 3. Run the executable - no installation required
 
 ### Option 2: Run from Source
@@ -105,6 +105,8 @@ The workflow in `.github/workflows/build-exe.yml` builds the executable on GitHu
    A cat naps on top of the window. When you pick a tool it wakes up, bats a couple of the other cards out of line, and taps yours. Hardware Scan and System File Repair run inside the window, with a progress bar, live output and the finished report on screen; reports are still saved to `reports/`. A little after a tool finishes, the cat drifts back to sleep.
 
    Click the cat to pet it: it closes its eyes, leans into your hand and little hearts float up.
+
+   Prefer a calmer menu? Click the **gear** in the title bar and switch off **Menu animations**: tools then start straight away without the cat batting the cards, while the cat itself (sleeping, waking, petting) stays. The choice is remembered.
 
    The window has its own title bar: drag it (or the cat) to move the window, and use the buttons on the right to minimise or close it.
 
@@ -202,7 +204,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This toolkit uses Windows built-in diagnostic and repair utilities. While these tools are safe and widely used, always ensure you have backups before performing system repairs. 
 
-**This is an early release (v0.2.1) and further testing is ongoing.** While the toolkit has been tested on various Windows 10 and 11 systems, users should exercise caution and report any issues encountered.
+**This is an early release (v0.2.2) and further testing is ongoing.** While the toolkit has been tested on various Windows 10 and 11 systems, users should exercise caution and report any issues encountered.
 
 The authors are not responsible for any system changes or data loss resulting from the use of this toolkit.
 
@@ -212,5 +214,5 @@ For issues, questions, or suggestions, please open an issue on the GitHub reposi
 
 ---
 
-**Version**: 0.2.1  
-**Last Updated**: October 2026
+**Version**: 0.2.2  
+**Last Updated**: November 2026
