@@ -468,7 +468,8 @@ class ToolkitApp:
         self.log = ["Ready."]
         self.sleep_timer = None
         self.view = "menu"
-        self.task = None        # {"k", "state": confirm|running|done|failed, ...}
+        self.task = None        # the job whose screen is showing (see new_job)
+        self.jobs = {}          # "1"/"2" -> job; long tools keep running here in the background
         self.drag = None
         self.settings = load_settings()
         self.settings_open = False
@@ -754,49 +755,59 @@ class ToolkitApp:
         cv.create_polygon(flat(self.at_body(rounded_points(px0, py0, px1, py1, 5, 5, 5, 5))),
                           fill=BAR, outline=LINE, width=1, tags=tags)
         self.prog_fill = cv.create_polygon(0, 0, 0, 0, 0, 0, fill=ACCENT, outline="", tags=tags)
-        self.prog_value = None   # 0..100, or None for "working..." sweep
         self.task_step = cv.create_text(BX + x0, BY + y0 + 60, anchor="w", text="", fill=DESC,
                                         font=self.font(self.ui, 14), tags=tags)
-        # output box
+        # output box: each job has its own text widget, shown here while you look at that job
         bx0, by0, bx1, by1 = self.task_box
         cv.create_polygon(flat(self.at_body(rounded_points(bx0, by0, bx1, by1, 10, 10, 10, 10))),
                           fill=BAR, outline=LINE, width=1, tags=tags)
-        self.text = tk.Text(cv, bg=BAR, fg=LOG_INK, font=self.font(self.mono, 12), relief="flat", bd=0,
-                            highlightthickness=0, wrap="word", padx=0, pady=0, cursor="arrow",
-                            selectbackground=mix(BAR, ACCENT, .45), inactiveselectbackground=mix(BAR, ACCENT, .3),
-                            spacing1=2, spacing3=2, takefocus=0)
-        self.text.config(state="disabled", yscrollcommand=self.on_text_scroll)
-        self.text.tag_config("head", foreground=INK, font=self.font(self.mono, 12, "bold"))
-        self.text.tag_config("warn", foreground="#b0412e")
-        self.text_win = cv.create_window(BX + bx0 + 16, BY + by0 + 12, anchor="nw", window=self.text,
+        self.text_win = cv.create_window(BX + bx0 + 16, BY + by0 + 12, anchor="nw",
                                          width=bx1 - bx0 - 16 - 26, height=by1 - by0 - 24, state="hidden")
         # slim scrollbar
         self.sb_track = (bx1 - 14, by0 + 12, bx1 - 8, by1 - 12)
         self.sb_thumb = cv.create_polygon(0, 0, 0, 0, 0, 0, fill=EDGE, outline="", tags=("task", "sb"))
         cv.tag_bind("sb", "<ButtonPress-1>", self.sb_press)
         cv.tag_bind("sb", "<B1-Motion>", self.sb_drag)
-        self.sb_span = (0.0, 1.0)
         # bottom row
         self.task_note = cv.create_text(BX + x0, BY + BODY_H - 28 - 19, anchor="w", text="", fill=META,
                                         font=self.font(self.mono, 11), tags=tags)
         self.buttons = {
             "start": self.make_button("btn_start", "Start repair", True),
             "cancel": self.make_button("btn_cancel", "Cancel", False),
+            "stop": self.make_button("btn_stop", "Stop repair", False),
             "back": self.make_button("btn_back", "Back to tools", True),
         }
         cv.tag_bind("btn_start", "<Button-1>", lambda e: self.start_repair())
         cv.tag_bind("btn_cancel", "<Button-1>", lambda e: self.close_task())
+        cv.tag_bind("btn_stop", "<Button-1>", lambda e: self.stop_repair())
         cv.tag_bind("btn_back", "<Button-1>", lambda e: self.close_task())
         cv.itemconfig("task", state="hidden")
 
-    def set_progress(self, value):
-        self.prog_value = value
-        self.draw_progress()
+    def make_job_text(self, job):
+        text = tk.Text(self.cv, bg=BAR, fg=LOG_INK, font=self.font(self.mono, 12), relief="flat", bd=0,
+                       highlightthickness=0, wrap="word", padx=0, pady=0, cursor="arrow",
+                       selectbackground=mix(BAR, ACCENT, .45), inactiveselectbackground=mix(BAR, ACCENT, .3),
+                       spacing1=2, spacing3=2, takefocus=0)
+        text.config(state="disabled",
+                    yscrollcommand=lambda f, l, job=job: self.on_text_scroll(job, f, l))
+        text.tag_config("head", foreground=INK, font=self.font(self.mono, 12, "bold"))
+        text.tag_config("warn", foreground="#b0412e")
+        return text
+
+    def showing(self, job):
+        """Is this job's screen the one on display right now?"""
+        return job is not None and job is self.task and self.view == "task"
+
+    def set_progress(self, job, value):
+        job["progress"] = value
+        if self.showing(job):
+            self.draw_progress()
 
     def draw_progress(self, t=None):
+        value = self.task["progress"] if self.task else 0
         px0, py0, px1, py1 = self.prog_rect
         w = px1 - px0
-        if self.prog_value is None:
+        if value is None:
             # back-and-forth sweep while we can't tell how far along we are
             p = (now_ms() if t is None else t) % 1800 / 1800
             p = EASE_IN_OUT(p * 2 if p < .5 else 2 - p * 2)
@@ -804,41 +815,45 @@ class ToolkitApp:
             a = px0 + (w - seg) * p
             b = a + seg
         else:
-            a, b = px0, px0 + max(10, w * max(0, min(100, self.prog_value)) / 100)
-        visible = self.view == "task" and self.prog_value != 0
+            a, b = px0, px0 + max(10, w * max(0, min(100, value)) / 100)
+        visible = self.view == "task" and value != 0
         self.cv.itemconfig(self.prog_fill, state="normal" if visible else "hidden")
         self.cv.coords(self.prog_fill, flat(self.at_body(rounded_points(a, py0, b, py1, 5, 5, 5, 5))))
 
-    def on_text_scroll(self, first, last):
-        self.sb_span = (float(first), float(last))
+    def on_text_scroll(self, job, first, last):
+        job["span"] = (float(first), float(last))
+        if not self.showing(job):
+            return
         tx0, ty0, tx1, ty1 = self.sb_track
-        f, l = self.sb_span
+        f, l = job["span"]
         if l - f >= 0.999:
             self.cv.itemconfig(self.sb_thumb, state="hidden")
             return
         h = ty1 - ty0
         a, b = ty0 + h * f, max(ty0 + h * f + 24, ty0 + h * l)
         self.cv.coords(self.sb_thumb, flat(self.at_body(rounded_points(tx0, a, tx1, b, 3, 3, 3, 3))))
-        if self.view == "task":
-            self.cv.itemconfig(self.sb_thumb, state="normal")
+        self.cv.itemconfig(self.sb_thumb, state="normal")
 
     def sb_press(self, e):
-        self.sb_grab = (e.y, self.sb_span[0])
+        if self.task:
+            self.sb_grab = (e.y, self.task["span"][0])
 
     def sb_drag(self, e):
-        y_start, f0 = self.sb_grab
-        ty0, ty1 = self.sb_track[1], self.sb_track[3]
-        self.text.yview_moveto(f0 + (e.y - y_start) / (ty1 - ty0))
+        if self.task and getattr(self, "sb_grab", None):
+            y_start, f0 = self.sb_grab
+            ty0, ty1 = self.sb_track[1], self.sb_track[3]
+            self.task["text"].yview_moveto(f0 + (e.y - y_start) / (ty1 - ty0))
 
-    def text_write(self, line, tag=None, replace=False):
-        at_end = self.sb_span[1] >= 0.999
-        self.text.config(state="normal")
+    def text_write(self, job, line, tag=None, replace=False):
+        text = job["text"]
+        at_end = job["span"][1] >= 0.999
+        text.config(state="normal")
         if replace:
-            self.text.delete("1.0", "end")
-        self.text.insert("end", line + "\n", tag or ())
-        self.text.config(state="disabled")
+            text.delete("1.0", "end")
+        text.insert("end", line + "\n", tag or ())
+        text.config(state="disabled")
         if at_end or replace:
-            self.text.see("end" if not replace else "1.0")
+            text.see("end" if not replace else "1.0")
 
     # ----- drawing: paw, masks, title bar -----
 
@@ -1046,7 +1061,7 @@ class ToolkitApp:
         if self.knob.moving(t) or getattr(self, "knob_dirty", False):
             self.knob_dirty = self.knob.moving(t)
             self.place_switch(t)
-        if self.view == "task" and self.prog_value is None:
+        if self.view == "task" and self.task and self.task["progress"] is None:
             self.draw_progress(t)
         self.draw_cat(t)
         self.draw_zzz(t)
@@ -1228,7 +1243,7 @@ class ToolkitApp:
             state = self.task["state"] if self.task else None
             if e.keysym == "Return" and state == "confirm":
                 self.start_repair()
-            elif e.keysym == "Escape" and state in ("confirm", "done", "failed"):
+            elif e.keysym == "Escape" and state:
                 self.close_task()
             return
         if e.char in ("0", "1", "2", "3", "4"):
@@ -1236,6 +1251,13 @@ class ToolkitApp:
 
     def pick(self, k):
         if self.busy or self.exited or self.view != "menu":
+            return
+        if k in self.jobs:
+            # this tool is already running (or finished in the background): go back to its screen
+            self.nudge_cat(4000)
+            self.show_job(self.jobs[k])
+            return
+        if k == "0" and self.running_jobs() and not self.confirm_leave("close the IT Toolkit"):
             return
         n = max(0, min(3, MISCHIEF))
         is_exit = k == "0"
@@ -1331,28 +1353,90 @@ class ToolkitApp:
         if view == "menu":
             for c in self.cards:
                 self.place_card(c)   # restores the right shadow layers
-        else:
-            self.on_text_scroll(*self.sb_span)
+            self.cv.itemconfig(self.sb_thumb, state="hidden")
 
-    def open_task(self, k, title):
-        self.task = {"k": k, "state": "confirm", "title": title}
+    # ----- jobs (Hardware Scan, System File Repair) -----
+    #
+    # A job keeps its own output, progress and status, so it can carry on while
+    # you go back to the menu and use the other tools. Its card shows how it is
+    # doing, and clicking the card brings its screen back.
+
+    def new_job(self, k, title):
+        job = {"k": k, "title": title, "state": "confirm", "status": "", "step": "", "note": "",
+               "progress": 0, "span": (0.0, 1.0), "stop": False}
+        job["text"] = self.make_job_text(job)
+        self.jobs[k] = job
+        return job
+
+    def running_jobs(self):
+        return [j for j in self.jobs.values() if j["state"] == "running"]
+
+    def show_job(self, job):
+        self.task = job
         self.reset_cards()
-        self.cv.itemconfig(self.task_title, text=title)
-        self.cv.itemconfig(self.task_note, text="")
+        self.cv.itemconfig(self.text_win, window=job["text"])
         self.show_view("task")
+        self.render_job(job)
+        self.on_text_scroll(job, *job["span"])
 
-    def set_task_state(self, state, status, step="", note=""):
-        self.task["state"] = state
-        self.cv.itemconfig(self.task_status, text=status, fill="#b0412e" if state == "failed" else INK_SOFT)
-        self.cv.itemconfig(self.task_step, text=step)
-        self.cv.itemconfig(self.task_note, text=note)
-        buttons = {"confirm": ["cancel", "start"], "running": [], "done": ["back"], "failed": ["back"]}[state]
+    def render_job(self, job):
+        if not self.showing(job):
+            return
+        failed = job["state"] in ("failed", "stopped")
+        self.cv.itemconfig(self.task_title, text=job["title"])
+        self.cv.itemconfig(self.task_status, text=job["status"], fill="#b0412e" if failed else INK_SOFT)
+        self.cv.itemconfig(self.task_step, text=job["step"])
+        self.cv.itemconfig(self.task_note, text=job["note"])
+        if job["state"] == "confirm":
+            buttons = ["cancel", "start"]
+        elif job["state"] == "running":
+            buttons = ["stop", "back"] if job["k"] == "2" else ["back"]
+        else:
+            buttons = ["back"]
         self.place_buttons([self.buttons[b] for b in buttons])
+        self.draw_progress()
+
+    def set_job(self, job, state=None, status=None, step=None, note=None):
+        for key, value in (("state", state), ("status", status), ("step", step), ("note", note)):
+            if value is not None:
+                job[key] = value
+        self.render_job(job)
+        self.update_card_status(job["k"])
+
+    def update_card_status(self, k):
+        """The card's bottom line shows a background job's progress, or its usual hint."""
+        c = next((c for c in self.cards if c["k"] == k), None)
+        if c is None:
+            return
+        job = self.jobs.get(k)
+        meta_item = c["text_items"][-1]
+        if job is None or job["state"] == "confirm":
+            text, ink = c["meta"], META
+        elif job["state"] == "running":
+            p = job["progress"]
+            if k == "2" and job.get("index") is not None:
+                text = f"Running · step {job['index'] + 1} of 4" + (f" · {p:.0f}%" if p else "")
+            else:
+                text = "Scanning…"
+            ink = ACCENT
+        elif job["state"] == "done":
+            text, ink = "Finished · click to see the report", ACCENT
+        elif job["state"] == "stopped":
+            text, ink = "Stopped · click to see the output", "#b0412e"
+        else:
+            text, ink = "Failed · click to see what happened", "#b0412e"
+        self.cv.itemconfig(meta_item, text=text, fill=ink)
 
     def close_task(self):
-        if not self.task or self.task["state"] == "running":
+        """Back to the menu. A running job keeps going; a finished one is put away."""
+        job = self.task
+        if job is None:
             return
         self.task = None
+        if job["state"] != "running":
+            self.jobs.pop(job["k"], None)
+            job["text"].destroy()
+            self.update_card_status(job["k"])
         self.show_view("menu")
         self.back_to_menu()
 
@@ -1366,10 +1450,10 @@ class ToolkitApp:
             self.start_hardware_scan()
             return
         if k == "2":
-            self.open_task("2", "System File Repair")
-            self.set_progress(0)
-            self.text_write(REPAIR_INTRO, replace=True)
-            self.set_task_state("confirm", "Ready", "DISM + SFC · 4 steps")
+            job = self.new_job("2", "System File Repair")
+            self.text_write(job, REPAIR_INTRO, replace=True)
+            self.show_job(job)
+            self.set_job(job, state="confirm", status="Ready", step="DISM + SFC · 4 steps")
             self.nudge_cat(4000)
             return
 
@@ -1395,10 +1479,13 @@ class ToolkitApp:
 
     def start_hardware_scan(self):
         self.push_log("=== Hardware Scan Tool ===")
-        self.open_task("1", "Hardware Scan")
-        self.set_progress(None)
-        self.text_write("Collecting system information...", replace=True)
-        self.set_task_state("running", "Scanning…", "CPU, GPU, RAM, BIOS, Secure Boot and disk health")
+        job = self.new_job("1", "Hardware Scan")
+        job["progress"] = None
+        self.text_write(job, "Collecting system information...", replace=True)
+        self.show_job(job)
+        self.set_job(job, state="running", status="Scanning…",
+                     step="CPU, GPU, RAM, BIOS, Secure Boot and disk health",
+                     note="You can go back to the tools while this runs.")
         self.nudge_cat(6000)
 
         def work():
@@ -1412,26 +1499,52 @@ class ToolkitApp:
         threading.Thread(target=work, daemon=True).start()
 
     def start_repair(self):
-        if not self.task or self.task["state"] != "confirm":
+        job = self.jobs.get("2")
+        if not job or job["state"] != "confirm":
             return
-        self.text_write("Starting System File Repair (DISM + SFC)...", replace=True)
-        self.set_progress(None)
-        self.set_task_state("running", "Running…", "Preparing")
+        self.text_write(job, "Starting System File Repair (DISM + SFC)...", replace=True)
+        self.set_progress(job, None)
+        self.set_job(job, state="running", status="Running…", step="Preparing",
+                     note="You can go back to the tools while this runs.")
         self.push_log("System File Repair started.")
         self.nudge_cat(6000)
         q = self.events
 
+        class Stopped(Exception):
+            pass
+
+        def on_step(i, n, cmd):
+            if job["stop"]:
+                raise Stopped()
+            q.put(("repair_step", i, n))
+
         def work():
             try:
                 path = fix_corrupted.run_fix_corrupted(
-                    on_step=lambda i, n, cmd: q.put(("repair_step", i, n)),
+                    on_step=on_step,
                     on_progress=lambda p: q.put(("repair_progress", p)),
                     on_message=lambda m: q.put(("repair_line", m)),
                 )
-                q.put(("repair_done", path))
+                q.put(("repair_stopped",) if job["stop"] else ("repair_done", path))
+            except Stopped:
+                q.put(("repair_stopped",))
             except Exception as e:
-                q.put(("repair_failed", str(e)))
+                q.put(("repair_stopped",) if job["stop"] else ("repair_failed", str(e)))
         threading.Thread(target=work, daemon=True).start()
+
+    def stop_repair(self):
+        job = self.jobs.get("2")
+        if not job or job["state"] != "running" or job["stop"]:
+            return
+        question = ("Stop System File Repair now?\n\n"
+                    "The DISM/SFC step that is running will be cut short. Repairs Windows has "
+                    "already made are kept, and you can run the repair again later.")
+        if not messagebox.askyesno("IT Toolkit", question, parent=self.root, icon="warning"):
+            return
+        job["stop"] = True
+        self.set_job(job, status="Stopping…")
+        self.text_write(job, "Stopping...", "warn")
+        kill_tree(fix_corrupted.current_process)
 
     def drain_events(self):
         for _ in range(200):
@@ -1440,47 +1553,60 @@ class ToolkitApp:
             except queue.Empty:
                 return
             kind, args = event[0], event[1:]
+            job = self.jobs.get("1" if kind.startswith("scan") else "2")
+            if job is None:
+                continue
             if kind == "scan_done":
                 path, report = args
-                self.set_progress(100)
-                self.text.config(state="normal")
-                self.text.delete("1.0", "end")
+                self.set_progress(job, 100)
+                text = job["text"]
+                text.config(state="normal")
+                text.delete("1.0", "end")
                 for line in report.splitlines():
                     head = line.startswith("===")
-                    self.text.insert("end", line + "\n", "head" if head else ())
-                self.text.config(state="disabled")
-                self.text.see("1.0")
-                self.set_task_state("done", "Finished", "Hardware scan completed.",
-                                    f"Saved to {short_path(path)}")
+                    text.insert("end", line + "\n", "head" if head else ())
+                text.config(state="disabled")
+                text.see("1.0")
+                self.set_job(job, state="done", status="Finished", step="Hardware scan completed.",
+                             note=f"Saved to {short_path(path)}")
                 self.push_log(f"Report saved to {short_path(path)}")
                 self.nudge_cat(4000)
             elif kind == "scan_failed":
-                self.set_progress(0)
-                self.text_write(f"[!] Hardware scan failed: {args[0]}", "warn")
-                self.set_task_state("failed", "Failed", "The scan stopped with an error.")
+                self.set_progress(job, 0)
+                self.text_write(job, f"[!] Hardware scan failed: {args[0]}", "warn")
+                self.set_job(job, state="failed", status="Failed", step="The scan stopped with an error.", note="")
                 self.push_log("[!] Hardware scan failed.")
                 self.nudge_cat(4000)
             elif kind == "repair_step":
                 i, n = args
-                self.set_progress(None)
-                self.cv.itemconfig(self.task_step, text=f"Step {i + 1} of {n} · {REPAIR_STEPS[i]}")
-                self.cv.itemconfig(self.task_status, text=f"Running · {i + 1}/{n}")
+                job["index"] = i
+                self.set_progress(job, None)
+                self.set_job(job, status=f"Running · {i + 1}/{n}", step=f"Step {i + 1} of {n} · {REPAIR_STEPS[i]}")
             elif kind == "repair_progress":
-                self.set_progress(args[0])
+                self.set_progress(job, args[0])
+                self.update_card_status("2")
             elif kind == "repair_line":
                 text = args[0].strip("\n")
-                if text.strip():
+                if text.strip() and not job["stop"]:
                     tag = "head" if text.lstrip().startswith(("===", "Windows Resource Protection")) else None
-                    self.text_write(text.strip(), tag)
+                    self.text_write(job, text.strip(), tag)
             elif kind == "repair_done":
                 path = args[0]
-                self.set_progress(100)
-                self.set_task_state("done", "Finished", "All health checks finished.", f"Saved to {short_path(path)}")
+                self.set_progress(job, 100)
+                self.set_job(job, state="done", status="Finished", step="All health checks finished.",
+                             note=f"Saved to {short_path(path)}")
                 self.push_log(f"System File Repair finished. Report saved to {short_path(path)}")
                 self.nudge_cat(4000)
+            elif kind == "repair_stopped":
+                self.set_progress(job, 0)
+                self.text_write(job, "System File Repair was stopped. No report was saved.", "warn")
+                self.set_job(job, state="stopped", status="Stopped", step="Stopped before it finished.", note="")
+                self.push_log("System File Repair stopped.")
+                self.nudge_cat(4000)
             elif kind == "repair_failed":
-                self.text_write(f"\nAn unexpected error occurred: {args[0]}", "warn")
-                self.set_task_state("failed", "Failed", "The repair stopped with an error.")
+                self.set_progress(job, 0)
+                self.text_write(job, f"\nAn unexpected error occurred: {args[0]}", "warn")
+                self.set_job(job, state="failed", status="Failed", step="The repair stopped with an error.", note="")
                 self.push_log("[!] System File Repair stopped with an error.")
                 self.nudge_cat(4000)
 
@@ -1498,15 +1624,21 @@ class ToolkitApp:
                             fill=INK, font=self.bold(20))
         self.root.after(1500, self.close, True)
 
+    def confirm_leave(self, action):
+        names = {"1": "The hardware scan", "2": "System File Repair"}
+        running = [names[j["k"]] for j in self.running_jobs()]
+        if not running:
+            return True
+        what = " and ".join(running)
+        verb = "is" if len(running) == 1 else "are"
+        question = f"{what} {verb} still running.\n\nStop {'it' if len(running) == 1 else 'them'} and {action}?"
+        return messagebox.askyesno("IT Toolkit", question, parent=self.root, icon="warning")
+
     def close(self, force=False):
-        running = self.task and self.task["state"] == "running"
-        if running and not force:
-            if self.task["k"] == "2":
-                question = "System File Repair is still running.\n\nStop it and close the IT Toolkit?"
-            else:
-                question = "The hardware scan is still running.\n\nClose the IT Toolkit anyway?"
-            if not messagebox.askyesno("IT Toolkit", question, parent=self.root, icon="warning"):
-                return
+        if not force and not self.confirm_leave("close the IT Toolkit"):
+            return
+        for job in self.jobs.values():
+            job["stop"] = True
         kill_tree(fix_corrupted.current_process)
         self.root.destroy()
 
