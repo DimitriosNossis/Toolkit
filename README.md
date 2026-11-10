@@ -104,6 +104,8 @@ The workflow in `.github/workflows/build-exe.yml` builds the executable on GitHu
 
    A cat naps on top of the window. When you pick a tool it wakes up, bats a couple of the other cards out of line, and taps yours. Hardware Scan and System File Repair run inside the window, with a progress bar, live output and the finished report on screen; reports are still saved to `reports/`. A little after a tool finishes, the cat drifts back to sleep.
 
+   Long jobs don't hold up the window: while System File Repair or a Hardware Scan is running, press **Back to tools** and keep using the other tools. The tool's card shows its progress (for example *Running · step 2 of 4 · 46%*); click it to see the live output again, or press **Stop repair** to cancel the repair. When a job finishes in the background its card says so, and clicking it shows the report.
+
    Click the cat to pet it: it closes its eyes, leans into your hand and little hearts float up.
 
    Prefer a calmer menu? Click the **gear** in the title bar and switch off **Menu animations**: tools then start straight away without the cat batting the cards, while the cat itself (sleeping, waking, petting) stays. The choice is remembered.
