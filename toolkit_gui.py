@@ -28,7 +28,7 @@ import hardware_scan
 import toolkit_launcher as launcher
 
 
-VERSION = "v0.2.2"
+VERSION = "v0.3.0"
 MISCHIEF = 2  # how many other cards the cat bats out of line (0-3)
 WINDOWS = os.name == "nt"
 
